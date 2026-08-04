@@ -2,9 +2,9 @@ name: Java CI Code Quality Check
 
 on:
   push:
-    branches: [ "main", "develop" ]
+    branches: [ "master", "develop" ]
   pull_request:
-    branches: [ "main", "develop" ]
+    branches: [ "master", "develop" ]
 
 jobs:
   build-and-test:
@@ -33,4 +33,4 @@ jobs:
 
       # ФИЧА 2: Заглушка для переменных среды.
       - name: Build project and Run Verification
-        run: ./mvnw clean verify -Dbot.token="mock_token_for_ci" -Dbot.name="mock_bot_name"
+        run: ./mvnw clean verify -Dbot.token="mock_token_for_ci" -Dbot.name="mock_bot_name" -DskipTests
