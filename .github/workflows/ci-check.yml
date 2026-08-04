@@ -1,0 +1,36 @@
+name: Java CI Code Quality Check
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+  pull_request:
+    branches: [ "main", "develop" ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      # ФИЧА 1: Кэш зависимостей Maven
+      - name: Cache Maven packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2
+          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+          restore-keys: ${{ runner.os }}-m2
+
+      - name: Grant execute permission for mvnw
+        run: chmod +x mvnw
+
+      # ФИЧА 2: Заглушка для переменных среды.
+      - name: Build project and Run Verification
+        run: ./mvnw clean verify -Dbot.token="mock_token_for_ci" -Dbot.name="mock_bot_name"
