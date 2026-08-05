@@ -19,8 +19,13 @@ public class UserApp {
     private String fio;
     private String city;
     private String industry;
-    private String tariff;
     private String term;
+
+    @Column(name = "contact_method")
+    private String contactMethod;
+
+    @Column(name = "contact_value")
+    private String contactValue;
 
     @Column(columnDefinition = "TEXT")
     private String comments;
