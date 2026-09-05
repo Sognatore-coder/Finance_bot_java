@@ -5,7 +5,8 @@ public enum BotState {
     FILLING_FIO,        // Ожидание ввода ФИО
     FILLING_CITY,       // Ожидание ввода города
     FILLING_INDUSTRY,   // Ожидание ввода отрасли бизнеса
-    FILLING_TERM,       // Ожидание ввода срока договора
+    FILLING_SERVICE_METHOD, // Выбор услуги кнопками (Аудит, Учет...)
+    FILLING_SERVICE_CUSTOM, // Ожидание ручного ввода услуги, если нажато "Другое"
     FILLING_CONTACT_METHOD, // Метод коммуникации
     FILLING_CONTACT_VALUE,  // Ввод контакта с валидацией
     FILLING_COMMENTS,   // Ожидание ввода комментариев
