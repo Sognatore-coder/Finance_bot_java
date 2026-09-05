@@ -5,14 +5,17 @@ import com.FinCode.finance_bot.database.entity.UserApp;
 import com.FinCode.finance_bot.database.repository.UserRepository;
 import com.FinCode.finance_bot.feature.registration.BotState;
 import com.FinCode.finance_bot.feature.registration.RegBlockHandler;
+import com.FinCode.finance_bot.service.EmailService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
+import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -25,14 +28,17 @@ public class FinanceBot extends TelegramLongPollingBot {
     private final BotConfig config;
     private final UserRepository userRepository;
     private final RegBlockHandler regBlockHandler;
-
+    private final EmailService emailService;
     private final Map<Long, List<Integer>> userMessageIds = new ConcurrentHashMap<>();
 
-    public FinanceBot(BotConfig config, UserRepository userRepository, RegBlockHandler regBlockHandler) {
+    private final Map<Long, Integer> activeInteractiveMessageId = new ConcurrentHashMap<>();
+
+    public FinanceBot(BotConfig config, UserRepository userRepository, RegBlockHandler regBlockHandler, EmailService emailService) {
         super(config.getBotToken());
         this.config = config;
         this.userRepository = userRepository;
         this.regBlockHandler = regBlockHandler;
+        this.emailService = emailService;
         log.info("Telegram-бот '{}' успешно инициализирован.", config.getBotUsername());
     }
 
@@ -43,11 +49,11 @@ public class FinanceBot extends TelegramLongPollingBot {
             String userText = update.getMessage().getText();
             int messageId = update.getMessage().getMessageId();
 
-            // Запоминаем ID сообщения пользователя
-            trackMessage(chatId, messageId);
-
-            // Ищем пользователя в PostgreSQL, если его нет — создаем с дефолтным статусом
             UserApp user = userRepository.findById(chatId).orElseGet(() -> createNewUser(chatId));
+
+            if (user.getBotState() == BotState.MAIN_MENU) {
+                trackMessage(chatId, messageId);
+            }
 
             if (userText.equals("/start")) {
                 sendWelcomeMessage(chatId, user);
@@ -62,27 +68,53 @@ public class FinanceBot extends TelegramLongPollingBot {
 
         else if (update.hasCallbackQuery()) {
             long chatId = update.getCallbackQuery().getMessage().getChatId();
+            int clickedMessageId = update.getCallbackQuery().getMessage().getMessageId();
             String callbackData = update.getCallbackQuery().getData();
+            String callbackQueryId = update.getCallbackQuery().getId();
+
+            Integer activeMessageId = activeInteractiveMessageId.get(chatId);
+
+            if (activeMessageId == null || !activeMessageId.equals(clickedMessageId)) {
+                answerCallback(callbackQueryId, "⚠️ Эта кнопка больше не активна. Пожалуйста, используйте актуальное меню.", true);
+                return;
+            }
+
+            activeInteractiveMessageId.remove(chatId);
+            answerCallback(callbackQueryId, null, false);
 
             UserApp user = userRepository.findById(chatId).orElseThrow();
 
             if (callbackData.equals("start_contract")) {
-                // Стираем всю предыдущую историю переписки
-                regBlockHandler.clearChatHistory(this, chatId, userMessageIds.getOrDefault(chatId, new ArrayList<>()));
+                regBlockHandler.clearChatHistory(this, chatId, userMessageIds.getOrDefault(chatId, Collections.emptyList()));
 
                 SendMessage firstQuestion = regBlockHandler.startAnketa(user);
                 sendMsg(firstQuestion, chatId);
+            }
+            else if (callbackData.startsWith("service_")) {
+                SendMessage nextStep = regBlockHandler.handleServiceCallback(user, callbackData,this);
+                sendMsg(nextStep, chatId);
             }
             else if (callbackData.startsWith("contact_")) {
                 SendMessage prompt = regBlockHandler.handleContactMethodCallback(user, callbackData);
                 sendMsg(prompt, chatId);
             }
             else if (callbackData.equals("accept_privacy")) {
-                log.info("Чат {}: анкета успешно отправлена и зафиксирована в БД.", chatId);
+                log.info("Чат {}: анкета полностью заполнена. Отправка на почту...", chatId);
 
-                SendMessage successMsg = new SendMessage(String.valueOf(chatId),
-                        "🎉 Спасибо! Ваша анкета успешно сохранена в системе. Финансовый директор свяжется с вами выбранным способом.");
-                sendMsg(successMsg, chatId);
+                try {
+                    emailService.sendAnketaToDirector(user);
+
+                    SendMessage successMsg = new SendMessage(String.valueOf(chatId),
+                            "🎉 Спасибо! Ваша анкета успешно сохранена и отправлена финансовому директору на почту. Он свяжется с вами.");
+                    sendMsg(successMsg, chatId);
+
+                } catch (Exception e) {
+                    log.error("Чат {}: не удалось отправить Email. Локальная ошибка или блокировка порта SMTP.", chatId, e);
+
+                    SendMessage errorMsg = new SendMessage(String.valueOf(chatId),
+                            "⚠️ Анкета сохранена в базе данных, но произошел технический сбой при отправке уведомления на почту. Исполнитель свяжется с вами.");
+                    sendMsg(errorMsg, chatId);
+                }
 
                 // Возвращаем пользователя в главное меню
                 user.setBotState(BotState.MAIN_MENU);
@@ -123,6 +155,10 @@ public class FinanceBot extends TelegramLongPollingBot {
             if (user == null || user.getBotState() == BotState.MAIN_MENU) {
                 trackMessage(chatId, sentMessage.getMessageId());
             }
+
+            if (msg.getReplyMarkup() != null) {
+                activeInteractiveMessageId.put(chatId, sentMessage.getMessageId());
+            }
         } catch (TelegramApiException e) {
             log.error("Ошибка при отправке сообщения в чат {}", chatId, e);
         }
@@ -137,9 +173,21 @@ public class FinanceBot extends TelegramLongPollingBot {
     }
 
     private void trackMessage(long chatId, int messageId) {
-        userMessageIds.computeIfAbsent(chatId, k -> new ArrayList<>()).add(messageId);
+        userMessageIds.computeIfAbsent(chatId, k -> Collections.synchronizedList(new ArrayList<>())).add(messageId);
     }
 
+    private void answerCallback(String callbackQueryId, String alertText, boolean showAlert) {
+        try {
+            AnswerCallbackQuery answer = new AnswerCallbackQuery(callbackQueryId);
+            if (alertText != null) {
+                answer.setText(alertText);
+                answer.setShowAlert(showAlert);
+            }
+            execute(answer);
+        } catch (TelegramApiException e) {
+            log.warn("Не удалось ответить на callback {}", callbackQueryId, e);
+        }
+    }
     @Override
     public String getBotUsername() {
         return config.getBotUsername();
