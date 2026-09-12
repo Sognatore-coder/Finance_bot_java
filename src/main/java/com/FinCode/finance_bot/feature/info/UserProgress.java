@@ -7,6 +7,7 @@ public class UserProgress {
     private boolean viewedResume = false;
     private boolean viewedDemo = false;
     private boolean viewedCalculator = false;
+    private boolean onboardingSent = false;
 
     public boolean isAllViewed() {
         return viewedResume && viewedDemo && viewedCalculator;

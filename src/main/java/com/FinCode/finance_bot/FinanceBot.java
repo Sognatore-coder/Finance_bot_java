@@ -56,13 +56,42 @@ public class FinanceBot extends TelegramLongPollingBot {
             String userText = update.getMessage().getText();
             int messageId = update.getMessage().getMessageId();
 
+            trackMessage(chatId, messageId);
+
+            boolean isExistingClient = false;
+
+            UserProgress progress = infoProgressMap.computeIfAbsent(chatId, k -> new UserProgress());
+
+            switch (userText) {
+                case "📄 Резюме специалиста" -> {
+                    infoBlockHandler.sendResumeFile(this, chatId, progress, isExistingClient);
+                    return;
+                }
+                case "📊 Демо-работы" -> {
+                    infoBlockHandler.sendDemoWorks(this, chatId, progress, isExistingClient);
+                    return;
+                }
+                case "🧮 Работа калькулятора" -> {
+                    infoBlockHandler.sendCalculatorDescription(this, chatId, progress, isExistingClient);
+                    return;
+                }
+                case "/start" -> {
+                    // Сбрасываем кэш кнопок в памяти при /start, чтобы можно было тестировать заново
+                    infoProgressMap.remove(chatId);
+
+                    SendMessage welcomeMsg = infoBlockHandler.createWelcomeMessage(chatId, isExistingClient);
+                    sendMsg(welcomeMsg, chatId);
+                    return;
+                }
+            }
+
             //UserApp user = userRepository.findById(chatId).orElseGet(() -> createNewUser(chatId));
 
 //            if (user.getBotState() == BotState.MAIN_MENU) {
 //                trackMessage(chatId, messageId);
 //            }
 
-            if (userText.equals("/start")) {
+            /*if (userText.equals("/start")) {
 //                user.setBotState(BotState.MAIN_MENU);
 //                userRepository.save(user);
                 trackMessage(chatId,messageId);
@@ -70,7 +99,7 @@ public class FinanceBot extends TelegramLongPollingBot {
                 SendMessage welcomeMsg = infoBlockHandler.createWelcomeMessage(chatId);
                 sendMsg(welcomeMsg,chatId);
                 return;
-            }
+            }*/
 
 //            if (user.getBotState() != BotState.MAIN_MENU) {
 //                SendMessage nextQuestion = regBlockHandler.handleInput(user, userText);
@@ -78,7 +107,7 @@ public class FinanceBot extends TelegramLongPollingBot {
 //            }
         }
 
-        else if (update.hasCallbackQuery()) {
+         else if (update.hasCallbackQuery()) {
             long chatId = update.getCallbackQuery().getMessage().getChatId();
             int clickedMessageId = update.getCallbackQuery().getMessage().getMessageId();
             String callbackData = update.getCallbackQuery().getData();
@@ -99,12 +128,7 @@ public class FinanceBot extends TelegramLongPollingBot {
 
                 UserProgress progress = infoProgressMap.computeIfAbsent(chatId, k -> new UserProgress());
 
-                switch (callbackData) {
-                    case "info_resume" -> infoBlockHandler.sendResumeFile(this, chatId, progress);
-                    case "info_demo" -> infoBlockHandler.sendDemoWorks(this, chatId, progress);
-                    case "info_calculator" -> infoBlockHandler.sendCalculatorDescription(this, chatId, progress);
-                }
-                return;
+
             }
 
 
