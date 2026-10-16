@@ -3,6 +3,7 @@ package com.FinCode.finance_bot;
 import com.FinCode.finance_bot.config.BotConfig;
 import com.FinCode.finance_bot.database.entity.UserApp;
 //import com.FinCode.finance_bot.database.repository.UserRepository;
+import com.FinCode.finance_bot.feature.calculator.CalculatorHandler;
 import com.FinCode.finance_bot.feature.info.InfoBlockHandler;
 import com.FinCode.finance_bot.feature.info.UserProgress;
 import com.FinCode.finance_bot.feature.registration.BotState;
@@ -31,10 +32,11 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 public class FinanceBot extends TelegramLongPollingBot {
     private final BotConfig config;
-//    private UserRepository userRepository;
+    //    private UserRepository userRepository;
 //    private RegBlockHandler regBlockHandler;
 //    private EmailService emailService;
     private final InfoBlockHandler infoBlockHandler;
+    private final CalculatorHandler calculatorHandler;
     private final Map<Long, UserProgress> infoProgressMap = new ConcurrentHashMap<>();
     private final Map<Long, List<Integer>> userMessageIds = new ConcurrentHashMap<>();
 
@@ -42,10 +44,11 @@ public class FinanceBot extends TelegramLongPollingBot {
 
     private final Map<Long, Set<Integer>> permanentInteractiveMessageIds = new ConcurrentHashMap<>();
 
-    public FinanceBot(BotConfig config, InfoBlockHandler infoBlockHandler) {
+    public FinanceBot(BotConfig config, InfoBlockHandler infoBlockHandler, CalculatorHandler calculatorHandler) {
         super(config.getBotToken());
         this.config = config;
         this.infoBlockHandler = infoBlockHandler;
+        this.calculatorHandler = calculatorHandler;
         log.info("Telegram-бот '{}' успешно инициализирован.", config.getBotUsername());
     }
 
@@ -72,7 +75,17 @@ public class FinanceBot extends TelegramLongPollingBot {
                     return;
                 }
                 case "🧮 Работа калькулятора" -> {
-                    infoBlockHandler.sendCalculatorDescription(this, chatId, progress, isExistingClient);
+                    Runnable onCalculatorFinished = null;
+                    if (!isExistingClient) {
+                        boolean wasMissingBeforeThisClick = !progress.isAllViewed();
+                        progress.setViewedCalculator(true);
+                        boolean isLastFlagNow = wasMissingBeforeThisClick && progress.isAllViewed();
+
+                        if (isLastFlagNow) {
+                            onCalculatorFinished = () -> infoBlockHandler.sendOnboardingMessageIfReady(this, chatId, progress,true);
+                        }
+                    }
+                    calculatorHandler.sendCalculatorChoice(this, chatId, onCalculatorFinished);
                     return;
                 }
                 case "/start" -> {
@@ -83,6 +96,12 @@ public class FinanceBot extends TelegramLongPollingBot {
                     sendMsg(welcomeMsg, chatId);
                     return;
                 }
+            }
+
+
+            if (calculatorHandler.hasActiveSession(chatId)) {
+                calculatorHandler.handleTextInput(this, chatId, userText, messageId);
+                return;
             }
 
             //UserApp user = userRepository.findById(chatId).orElseGet(() -> createNewUser(chatId));
@@ -107,11 +126,16 @@ public class FinanceBot extends TelegramLongPollingBot {
 //            }
         }
 
-         else if (update.hasCallbackQuery()) {
+        else if (update.hasCallbackQuery()) {
             long chatId = update.getCallbackQuery().getMessage().getChatId();
             int clickedMessageId = update.getCallbackQuery().getMessage().getMessageId();
             String callbackData = update.getCallbackQuery().getData();
             String callbackQueryId = update.getCallbackQuery().getId();
+
+            if (callbackData.equals("calc_choice_1") || callbackData.equals("calc_choice_2")) {
+                calculatorHandler.handleChoiceCallback(this, chatId, callbackData, callbackQueryId, clickedMessageId);
+                return;
+            }
 
             boolean isInfoCallback = callbackData.startsWith("info_");
 
