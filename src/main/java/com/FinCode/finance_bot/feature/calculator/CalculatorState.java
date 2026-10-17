@@ -1,0 +1,13 @@
+package com.FinCode.finance_bot.feature.calculator;
+
+public enum CalculatorState {
+    AWAITING_CHOICE,
+
+    CALC1_AWAITING_COST,
+    CALC1_AWAITING_PROFITABILITY,
+
+    CALC2_AWAITING_FIXED_COSTS,
+    CALC2_AWAITING_PRICE,
+    CALC2_AWAITING_COST,
+    CALC2_AWAITING_VARIABLE_PERCENT
+}

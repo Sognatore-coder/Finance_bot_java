@@ -1,5 +1,6 @@
 target/
 src/main/resources/application.properties
+src/main/resources/files/
 !**/src/main/**/target/
 !**/src/test/**/target/
 
