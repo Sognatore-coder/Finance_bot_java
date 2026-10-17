@@ -31,12 +31,19 @@ public class RegBlockHandler {
     // Очистка истории
     public void clearChatHistory(AbsSender sender, long chatId, List<Integer> messageIds) {
         if (messageIds == null || messageIds.isEmpty()) return;
-        log.info("Чат {}: запуск очистки истории чата", chatId);
-        for (Integer messageId : messageIds) {
-            DeleteMessage deleteMessage = new DeleteMessage(String.valueOf(chatId), messageId);
-            try { sender.execute(deleteMessage); } catch (Exception ignored) {}
+
+        synchronized (messageIds) {
+            log.info("Чат {}: запуск очистки истории чата ({} сообщений)", chatId, messageIds.size());
+            for (Integer messageId : messageIds) {
+                DeleteMessage deleteMessage = new DeleteMessage(String.valueOf(chatId), messageId);
+                try {
+                    sender.execute(deleteMessage);
+                } catch (Exception e) {
+                    log.debug("Чат {}: не удалось удалить сообщение {}: {}", chatId, messageId, e.getMessage());
+                }
+            }
+            messageIds.clear();
         }
-        messageIds.clear();
     }
 
     // Старт анкеты
@@ -69,14 +76,18 @@ public class RegBlockHandler {
             }
             case FILLING_INDUSTRY -> {
                 user.setIndustry(text);
-                user.setBotState(BotState.FILLING_TERM);
+                // [ИЗМЕНЕНО] Вместо срока выводим клавиатуру выбора услуг
+                user.setBotState(BotState.FILLING_SERVICE_METHOD);
                 userRepository.save(user);
-                response.setText("⏳ Укажите желаемый срок договора (например: 3 месяцев, 6 месяцев):");
+                response.setText("📊 Выберите интересующую вас услугу:");
+                response.setReplyMarkup(createServicesKeyboard());
             }
-            case FILLING_TERM -> {
-                user.setTerm(text);
+            case FILLING_SERVICE_CUSTOM -> {
+                // [НОВЫЙ ШАГ] Сюда попадаем, если пользователь нажал "Другое" и написал текст руками
+                user.setServiceType("Другое: " + text.trim());
                 user.setBotState(BotState.FILLING_CONTACT_METHOD);
                 userRepository.save(user);
+                log.info("Чат {}: вручную введена услуга: '{}'", chatId, text);
                 response.setText("📞 Выберите удобный формат коммуникации для связи:");
                 response.setReplyMarkup(createContactMethodKeyboard());
             }
@@ -90,7 +101,8 @@ public class RegBlockHandler {
                     user.setContactValue(validationResult);
                     user.setBotState(BotState.FILLING_COMMENTS);
                     userRepository.save(user);
-                    response.setText("💬 Введите дополнительные комментарии (или отправьте дефис '-', если комментариев нет):");
+                    response.setText("💬 Введите дополнительные комментарии, проблемы, которые касаются вашего бизнеса," +
+                            " чтоб исполнитель заранее знал, с чем ему предстоит работать (или отправьте дефис '-', если комментариев нет):");
                 }
             }
             case FILLING_COMMENTS -> {
@@ -114,6 +126,44 @@ public class RegBlockHandler {
         return response;
     }
 
+    // Обработка кнопки "Услуги"
+    public SendMessage handleServiceCallback(UserApp user, String callbackData, AbsSender sender) {
+        long chatId = user.getChatId();
+        String action = callbackData.replace("service_", "").toUpperCase();
+
+        if (action.equals("OTHER")) {
+            user.setBotState(BotState.FILLING_SERVICE_CUSTOM);
+            userRepository.save(user);
+            log.info("Чат {}: выбрана опция услуги [Другое]. Ожидание ручного ввода.", chatId);
+            return new SendMessage(String.valueOf(chatId), "📝 Напишите, пожалуйста, наименование услуги, которая вам интересна:");
+        } else {
+            String serviceName = switch (action) {
+                case "AUDIT" -> "Аудит";
+                case "ACCOUNTING" -> "Учет";
+                case "MODEL" -> "Фин. модель";
+                case "ANALYSIS" -> "Анализ";
+                default -> action;
+            };
+            user.setServiceType(serviceName);
+            user.setBotState(BotState.FILLING_CONTACT_METHOD);
+            userRepository.save(user);
+            log.info("Чат {}: выбрана услуга через кнопку: [{}]", chatId, serviceName);
+
+            try {
+                SendMessage choiceMessage = new SendMessage();
+                choiceMessage.setChatId(String.valueOf(chatId));
+                choiceMessage.setText("Выбрана услуга: " + serviceName);
+                sender.execute(choiceMessage); // Отправляем мгновенно в чат
+            } catch (Exception e) {
+                log.error("Ошибка при отправке сообщения-фиксации выбора услуги", e);
+            }
+
+            SendMessage nextStep = new SendMessage(String.valueOf(chatId), "📞 Выберите удобный формат коммуникации для связи:");
+            nextStep.setReplyMarkup(createContactMethodKeyboard());
+            return nextStep;
+        }
+    }
+
     // Обработка нажатия на кнопку "способ связи"
     public SendMessage handleContactMethodCallback(UserApp user, String callbackData) {
         String method = callbackData.replace("contact_", "").toUpperCase();
@@ -124,7 +174,7 @@ public class RegBlockHandler {
         log.info("Чат {}: выбран способ связи [{}]", user.getChatId(), method);
 
         String promptText = switch (method) {
-            case "TELEGRAM" -> "Пожалуйста, введите ваш Telegram аккаунт (аккаунт должен обязательно начинаться со знака @, например: @spiker):";
+            case "TELEGRAM" -> "Пожалуйста, введите ваш Telegram аккаунт (аккаунт должен обязательно начинаться со знака @, например: @default):";
             case "EMAIL" -> "Пожалуйста, введите ваш адрес электронной почты (например: example@gmail.com):";
             case "PHONE" -> "Пожалуйста, введите ваш номер телефона:";
             default -> "Введите контактные данные:";
@@ -174,7 +224,7 @@ public class RegBlockHandler {
     // Тексты ошибок для пользователя при неверном вводе
     private String getErrorMessage(String method) {
         return switch (method) {
-            case "TELEGRAM" -> "❌ Неверный формат! Имя аккаунта Telegram должно обязательно начинаться со знака @ (например: @spiker). Попробуйте еще раз:";
+            case "TELEGRAM" -> "❌ Неверный формат! Имя аккаунта Telegram должно обязательно начинаться со знака @ (например: @default). Попробуйте еще раз:";
             case "EMAIL" -> "❌ Неверный формат почты! Адрес должен содержать знак @ и домен (например: client@gmail.com). Попробуйте еще раз:";
             case "PHONE" -> "❌ Неверный формат номера! Убедитесь, что вы ввели корректный номер телефона (минимум 10 цифр). Попробуйте еще раз:";
             default -> "❌ Формат указан неверно. Попробуйте еще раз:";
@@ -197,6 +247,18 @@ public class RegBlockHandler {
         InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
         List<List<InlineKeyboardButton>> rows = new ArrayList<>();
         rows.add(Collections.singletonList(createButton("🤝 Отправить анкету", "accept_privacy")));
+        markup.setKeyboard(rows);
+        return markup;
+    }
+
+    // Клавиатура услуг
+    private InlineKeyboardMarkup createServicesKeyboard() {
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        List<List<InlineKeyboardButton>> rows = new ArrayList<>();
+
+        rows.add(List.of(createButton("Аудит", "service_audit"), createButton("Учет", "service_accounting")));
+        rows.add(List.of(createButton("Фин. модель", "service_model"), createButton("Анализ", "service_analysis")));
+        rows.add(Collections.singletonList(createButton("Другое", "service_other")));
         markup.setKeyboard(rows);
         return markup;
     }

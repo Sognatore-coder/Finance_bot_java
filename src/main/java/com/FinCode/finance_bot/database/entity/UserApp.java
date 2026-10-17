@@ -19,7 +19,8 @@ public class UserApp {
     private String fio;
     private String city;
     private String industry;
-    private String term;
+    @Column(name = "service_type")
+    private String serviceType;
 
     @Column(name = "contact_method")
     private String contactMethod;

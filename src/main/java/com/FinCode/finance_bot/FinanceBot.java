@@ -7,8 +7,8 @@ import com.FinCode.finance_bot.feature.calculator.CalculatorHandler;
 import com.FinCode.finance_bot.feature.info.InfoBlockHandler;
 import com.FinCode.finance_bot.feature.info.UserProgress;
 import com.FinCode.finance_bot.feature.registration.BotState;
-//import com.FinCode.finance_bot.feature.registration.RegBlockHandler;
-//import com.FinCode.finance_bot.service.EmailService;
+import com.FinCode.finance_bot.feature.registration.RegBlockHandler;
+import com.FinCode.finance_bot.service.EmailService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
@@ -152,9 +152,37 @@ public class FinanceBot extends TelegramLongPollingBot {
 
                 UserProgress progress = infoProgressMap.computeIfAbsent(chatId, k -> new UserProgress());
 
+            if (callbackData.equals("start_contract")) {
+                regBlockHandler.clearChatHistory(this, chatId, userMessageIds.getOrDefault(chatId, Collections.emptyList()));
 
+                SendMessage firstQuestion = regBlockHandler.startAnketa(user);
+                sendMsg(firstQuestion, chatId);
             }
+            else if (callbackData.startsWith("service_")) {
+                SendMessage nextStep = regBlockHandler.handleServiceCallback(user, callbackData,this);
+                sendMsg(nextStep, chatId);
+            }
+            else if (callbackData.startsWith("contact_")) {
+                SendMessage prompt = regBlockHandler.handleContactMethodCallback(user, callbackData);
+                sendMsg(prompt, chatId);
+            }
+            else if (callbackData.equals("accept_privacy")) {
+                log.info("Чат {}: анкета полностью заполнена. Отправка на почту...", chatId);
 
+                try {
+                    emailService.sendAnketaToDirector(user);
+
+                    SendMessage successMsg = new SendMessage(String.valueOf(chatId),
+                            "🎉 Спасибо! Ваша анкета успешно сохранена и отправлена финансовому директору на почту. Он свяжется с вами.");
+                    sendMsg(successMsg, chatId);
+
+                } catch (Exception e) {
+                    log.error("Чат {}: не удалось отправить Email. Локальная ошибка или блокировка порта SMTP.", chatId, e);
+
+                    SendMessage errorMsg = new SendMessage(String.valueOf(chatId),
+                            "⚠️ Анкета сохранена в базе данных, но произошел технический сбой при отправке уведомления на почту. Исполнитель свяжется с вами.");
+                    sendMsg(errorMsg, chatId);
+                }
 
             Integer activeMessageId = activeInteractiveMessageId.get(chatId);
 
@@ -230,6 +258,10 @@ public class FinanceBot extends TelegramLongPollingBot {
                 } else {
                     activeInteractiveMessageId.put(chatId, sentMessage.getMessageId());
                 }
+            }
+
+            if (msg.getReplyMarkup() != null) {
+                activeInteractiveMessageId.put(chatId, sentMessage.getMessageId());
             }
         } catch (TelegramApiException e) {
             log.error("Ошибка при отправке сообщения в чат {}", chatId, e);
